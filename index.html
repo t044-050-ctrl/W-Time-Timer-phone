@@ -3,10 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Wタイムタイマーフォン</title>
-    <meta property="og:title" content="Wタイムタイマーフォン">
-    <meta property="og:description" content="Wタイムタイマーのスマホ版です。">
-    <meta property="og:type" content="website">
+    <title>タイムタイマー</title>
 
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -342,7 +339,8 @@
         // APP STATE
         let state = {
             setMinutes: 0,          // Selected total timer minutes (0 - 60)
-            remainingSeconds: 0,    // Current active remaining seconds
+            remainingSeconds: 0,    // Current active remaining seconds (digital display)
+            visualRemainingSeconds: 0, // Fractional seconds for smooth timer-dial animation
             initialSeconds: 0,      // Starting seconds for "もう一度" restart
             timerColor: '#ef4444',    // Default timer disk color
             finishMessage: 'おわり',   // Message displayed when finished
@@ -460,8 +458,9 @@
             ctx.stroke();
 
             // 2. Counter-Clockwise Color Wedge Pie (Starts 12 o'clock, extends Counter-Clockwise)
-            if (state.remainingSeconds > 0) {
-                const remainingFraction = Math.min(1, state.remainingSeconds / scaleSeconds);
+            const dialRemainingSeconds = state.status === 'running' ? state.visualRemainingSeconds : state.remainingSeconds;
+            if (dialRemainingSeconds > 0) {
+                const remainingFraction = Math.min(1, dialRemainingSeconds / scaleSeconds);
                 // Top position is -Math.PI / 2. Extending COUNTER-CLOCKWISE means subtracting angle.
                 const endAngle = -Math.PI / 2 - (2 * Math.PI * remainingFraction);
 
@@ -948,6 +947,7 @@
             const clamped = Math.max(0, Math.min(60, minutes));
             state.setMinutes = clamped;
             state.remainingSeconds = clamped * 60;
+            state.visualRemainingSeconds = clamped * 60;
             state.initialSeconds = clamped * 60;
             if (state.status === 'finished') {
                 stopAlarm();
@@ -961,6 +961,7 @@
         function addMinutes(extraMinutes) {
             let newSecs = Math.min(3600, Math.max(0, state.remainingSeconds + (extraMinutes * 60)));
             state.remainingSeconds = newSecs;
+            state.visualRemainingSeconds = newSecs;
             state.setMinutes = Math.ceil(newSecs / 60);
             if (state.status === 'finished') {
                 stopAlarm();
@@ -977,6 +978,7 @@
         function addSeconds(extraSeconds) {
             let newSecs = Math.min(3600, Math.max(0, state.remainingSeconds + extraSeconds));
             state.remainingSeconds = newSecs;
+            state.visualRemainingSeconds = newSecs;
             state.setMinutes = Math.ceil(newSecs / 60);
             if (state.status === 'finished') {
                 stopAlarm();
@@ -992,28 +994,47 @@
 
         function startTimer() {
             if (state.remainingSeconds <= 0) return;
+
+            // iPhone / Safariでは、ユーザー操作中に音声を有効化しておく必要がある。
+            // タイマー終了時に初めてAudioContextを作ると、音が鳴らない場合がある。
+            try {
+                if (!audioCtx) {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume().catch(e => console.error('Audio resume error:', e));
+                }
+            } catch (e) {
+                console.error('Audio initialization error:', e);
+            }
+
             if (state.status === 'stopped') {
                 state.initialSeconds = state.remainingSeconds;
+                state.visualRemainingSeconds = state.remainingSeconds;
             }
             state.status = 'running';
             updatePlayPauseButton();
 
             if (timerInterval) clearInterval(timerInterval);
-            
-            const startTime = Date.now();
-            const initialRemaining = state.remainingSeconds;
 
+            const startTime = performance.now();
+            const initialRemaining = Math.max(0, state.visualRemainingSeconds || state.remainingSeconds);
+
+            // Update the dial about 60 times per second so the colored sector
+            // shrinks continuously rather than jumping once per second.
             timerInterval = setInterval(() => {
-                const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
-                state.remainingSeconds = Math.max(0, initialRemaining - elapsedSeconds);
+                const elapsedSeconds = (performance.now() - startTime) / 1000;
+                state.visualRemainingSeconds = Math.max(0, initialRemaining - elapsedSeconds);
+                state.remainingSeconds = Math.ceil(state.visualRemainingSeconds);
 
                 updateDigitalDisplay();
                 drawTimer();
 
-                if (state.remainingSeconds <= 0) {
+                if (state.visualRemainingSeconds <= 0) {
+                    state.remainingSeconds = 0;
                     onTimerFinished();
                 }
-            }, 200);
+            }, 16);
         }
 
         function pauseTimer() {
@@ -1039,6 +1060,7 @@
             stopAlarm();
             if (timerInterval) clearInterval(timerInterval);
             state.remainingSeconds = state.initialSeconds || (state.setMinutes * 60);
+            state.visualRemainingSeconds = state.remainingSeconds;
             state.status = 'stopped';
             updatePlayPauseButton();
             updateDigitalDisplay();
@@ -1050,6 +1072,7 @@
             if (timerInterval) clearInterval(timerInterval);
             state.setMinutes = 0;
             state.remainingSeconds = 0;
+            state.visualRemainingSeconds = 0;
             state.initialSeconds = 0;
             state.status = 'stopped';
             updatePlayPauseButton();
@@ -1093,35 +1116,40 @@
                 }
                 stopAlarm();
 
-                let count = 0;
-                alarmInterval = setInterval(() => {
-                    if (count >= 10) {
-                        stopAlarm();
-                        return;
-                    }
+                // 終了時にも念のためAudioContextを再開してからアラームを鳴らす。
+                const beginAlarm = () => {
+                    let count = 0;
+                    alarmInterval = setInterval(() => {
+                        if (count >= 10) {
+                            stopAlarm();
+                            return;
+                        }
 
-                    for (let i = 0; i < 3; i++) {
-                        const osc = audioCtx.createOscillator();
-                        const gain = audioCtx.createGain();
-                        
-                        osc.type = 'sine';
-                        osc.frequency.value = 880;
+                        for (let i = 0; i < 3; i++) {
+                            const osc = audioCtx.createOscillator();
+                            const gain = audioCtx.createGain();
+                            osc.type = 'sine';
+                            osc.frequency.value = 880;
 
-                        const startTime = audioCtx.currentTime + (i * 0.15);
-                        gain.gain.setValueAtTime(0.3, startTime);
-                        gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.1);
+                            const startTime = audioCtx.currentTime + (i * 0.15);
+                            gain.gain.setValueAtTime(0.3, startTime);
+                            gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.1);
+                            osc.connect(gain);
+                            gain.connect(audioCtx.destination);
+                            osc.start(startTime);
+                            osc.stop(startTime + 0.1);
+                        }
+                        count++;
+                    }, 1000);
+                };
 
-                        osc.connect(gain);
-                        gain.connect(audioCtx.destination);
-
-                        osc.start(startTime);
-                        osc.stop(startTime + 0.1);
-                    }
-
-                    count++;
-                }, 1000);
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume().then(beginAlarm).catch(e => console.error('Audio resume error:', e));
+                } else {
+                    beginAlarm();
+                }
             } catch (e) {
-                console.error("Audio error:", e);
+                console.error('Audio error:', e);
             }
         }
 
