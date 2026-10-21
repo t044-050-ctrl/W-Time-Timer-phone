@@ -354,6 +354,8 @@
         };
 
         let timerInterval = null;
+        let timerDeadline = null;
+        let finishTimeout = null;
         let clockInterval = null;
         let audioCtx = null;
         let alarmInterval = null;
@@ -947,6 +949,9 @@
 
         // TIMER CONTROLS LOGIC
         function setTimerDuration(minutes) {
+            if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+            if (finishTimeout) { clearTimeout(finishTimeout); finishTimeout = null; }
+            timerDeadline = null;
             const clamped = Math.max(0, Math.min(60, minutes));
             state.setMinutes = clamped;
             state.remainingSeconds = clamped * 60;
@@ -969,7 +974,13 @@
             if (state.status === 'finished') {
                 stopAlarm();
             }
-            if (state.status !== 'running') {
+            if (state.status === 'running') {
+                timerDeadline = Date.now() + newSecs * 1000;
+                if (finishTimeout) clearTimeout(finishTimeout);
+                finishTimeout = setTimeout(() => {
+                    if (state.status === 'running') finishTimerAtDeadline();
+                }, newSecs * 1000);
+            } else {
                 state.status = 'stopped';
                 state.initialSeconds = newSecs;
             }
@@ -986,7 +997,13 @@
             if (state.status === 'finished') {
                 stopAlarm();
             }
-            if (state.status !== 'running') {
+            if (state.status === 'running') {
+                timerDeadline = Date.now() + newSecs * 1000;
+                if (finishTimeout) clearTimeout(finishTimeout);
+                finishTimeout = setTimeout(() => {
+                    if (state.status === 'running') finishTimerAtDeadline();
+                }, newSecs * 1000);
+            } else {
                 state.status = 'stopped';
                 state.initialSeconds = newSecs;
             }
@@ -998,8 +1015,7 @@
         function startTimer() {
             if (state.remainingSeconds <= 0) return;
 
-            // iPhone / Safariでは、ユーザー操作中に音声を有効化しておく必要がある。
-            // タイマー終了時に初めてAudioContextを作ると、音が鳴らない場合がある。
+            // Start/resume audio during the user gesture so browsers are more likely to allow the alarm.
             try {
                 if (!audioCtx) {
                     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -1016,34 +1032,59 @@
                 state.visualRemainingSeconds = state.remainingSeconds;
             }
             state.status = 'running';
+            timerDeadline = Date.now() + Math.max(0, state.visualRemainingSeconds || state.remainingSeconds) * 1000;
             updatePlayPauseButton();
 
             if (timerInterval) clearInterval(timerInterval);
+            if (finishTimeout) clearTimeout(finishTimeout);
 
-            const startTime = performance.now();
-            const initialRemaining = Math.max(0, state.visualRemainingSeconds || state.remainingSeconds);
-
-            // Update the dial about 60 times per second so the colored sector
-            // shrinks continuously rather than jumping once per second.
-            timerInterval = setInterval(() => {
-                const elapsedSeconds = (performance.now() - startTime) / 1000;
-                state.visualRemainingSeconds = Math.max(0, initialRemaining - elapsedSeconds);
-                state.remainingSeconds = Math.ceil(state.visualRemainingSeconds);
-
+            // Use an absolute deadline, not elapsed callback time, so background-tab throttling
+            // does not make the timer lose time.
+            const tick = () => {
+                if (state.status !== 'running' || timerDeadline === null) return;
+                const remaining = Math.max(0, (timerDeadline - Date.now()) / 1000);
+                state.visualRemainingSeconds = remaining;
+                state.remainingSeconds = Math.ceil(remaining);
                 updateDigitalDisplay();
                 drawTimer();
-
-                if (state.visualRemainingSeconds <= 0) {
+                if (remaining <= 0) {
                     state.remainingSeconds = 0;
+                    state.visualRemainingSeconds = 0;
                     onTimerFinished();
                 }
-            }, 16);
+            };
+
+            timerInterval = setInterval(tick, 50);
+            finishTimeout = setTimeout(() => {
+                if (state.status === 'running') {
+                    state.remainingSeconds = 0;
+                    state.visualRemainingSeconds = 0;
+                    onTimerFinished();
+                }
+            }, Math.max(0, timerDeadline - Date.now()));
+            tick();
+        }
+
+        function finishTimerAtDeadline() {
+            if (state.status !== 'running') return;
+            state.remainingSeconds = 0;
+            state.visualRemainingSeconds = 0;
+            onTimerFinished();
         }
 
         function pauseTimer() {
+            if (state.status === 'running' && timerDeadline !== null) {
+                const remaining = Math.max(0, (timerDeadline - Date.now()) / 1000);
+                state.visualRemainingSeconds = remaining;
+                state.remainingSeconds = Math.ceil(remaining);
+            }
             state.status = 'paused';
-            if (timerInterval) clearInterval(timerInterval);
+            timerDeadline = null;
+            if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+            if (finishTimeout) { clearTimeout(finishTimeout); finishTimeout = null; }
             updatePlayPauseButton();
+            updateDigitalDisplay();
+            drawTimer();
         }
 
         function toggleTimer() {
@@ -1061,7 +1102,9 @@
 
         function restartTimer() {
             stopAlarm();
-            if (timerInterval) clearInterval(timerInterval);
+            if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+            if (finishTimeout) { clearTimeout(finishTimeout); finishTimeout = null; }
+            timerDeadline = null;
             state.remainingSeconds = state.initialSeconds || (state.setMinutes * 60);
             state.visualRemainingSeconds = state.remainingSeconds;
             state.status = 'stopped';
@@ -1072,7 +1115,9 @@
 
         function resetTimer() {
             stopAlarm();
-            if (timerInterval) clearInterval(timerInterval);
+            if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+            if (finishTimeout) { clearTimeout(finishTimeout); finishTimeout = null; }
+            timerDeadline = null;
             state.setMinutes = 0;
             state.remainingSeconds = 0;
             state.visualRemainingSeconds = 0;
@@ -1164,13 +1209,32 @@
         }
 
         function onTimerFinished() {
-            if (timerInterval) clearInterval(timerInterval);
+            if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+            if (finishTimeout) { clearTimeout(finishTimeout); finishTimeout = null; }
+            timerDeadline = null;
+            state.remainingSeconds = 0;
+            state.visualRemainingSeconds = 0;
             state.status = 'finished';
             updatePlayPauseButton();
             updateDigitalDisplay();
             drawTimer();
             playAlarm();
         }
+
+        // If the browser throttles this page in the background, reconcile the timer immediately on return.
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && state.status === 'running' && timerDeadline !== null) {
+                const remaining = Math.max(0, (timerDeadline - Date.now()) / 1000);
+                state.visualRemainingSeconds = remaining;
+                state.remainingSeconds = Math.ceil(remaining);
+                if (remaining <= 0) {
+                    onTimerFinished();
+                } else {
+                    updateDigitalDisplay();
+                    drawTimer();
+                }
+            }
+        });
 
         function updateSelectedColorUI() {
             document.querySelectorAll('.color-btn').forEach(btn => {
