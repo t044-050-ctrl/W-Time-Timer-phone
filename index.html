@@ -93,19 +93,36 @@
                 align-items: start !important;
             }
             #container-timer {
-                width: min(100%, 430px) !important;
+                /* 縦画面では円形タイマーを画面高に合わせて縮小し、
+                   デジタルタイマーと下部の切替バーのための空間を確保 */
+                width: min(100%, 430px, 38dvh) !important;
                 max-width: 430px !important;
                 margin-inline: auto;
             }
             #container-timer .square-box {
                 width: 100%;
-                padding: 0.25rem !important;
+                padding: 0.125rem !important;
             }
             #container-digital {
                 width: 100% !important;
                 max-width: none !important;
-                padding: 0.875rem !important;
-                gap: 0.875rem !important;
+                padding: 0.625rem !important;
+                gap: 0.5rem !important;
+            }
+            /* デジタル表示・操作ボタンをコンパクトにして、
+               +5分などの追加ボタンまで画面内に収める */
+            #container-digital > div:first-child > div:first-child {
+                min-height: 5.25rem !important;
+            }
+            #timer-main-actions button {
+                padding-top: 0.625rem !important;
+                padding-bottom: 0.625rem !important;
+                font-size: 1rem !important;
+            }
+            #timer-quick-actions button {
+                padding-top: 0.625rem !important;
+                padding-bottom: 0.625rem !important;
+                font-size: 0.7rem !important;
             }
         }
 
