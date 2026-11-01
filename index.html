@@ -586,14 +586,19 @@
             else step = 5;
 
             for (let m = 0; m <= scaleMinutes; m += step) {
-                if (m === 0) continue; // SKIP 0 NUMBER
+                if (m === 0) continue; // 0 is normally omitted; the top position changes after starting
 
                 // Counter-clockwise angle from top (-Math.PI/2)
                 const angle = -Math.PI / 2 - (m / scaleMinutes) * 2 * Math.PI;
                 const x = labelRadius * Math.cos(angle);
                 const y = labelRadius * Math.sin(angle);
 
-                ctx.fillText(m.toString(), x, y);
+                // 12時の位置は、スタート後（停止・終了を含む）は「0」、
+                // もう一度／リセットで停止状態に戻ると元の設定数字を表示する。
+                const label = (m === scaleMinutes && state.status !== 'stopped')
+                    ? '0'
+                    : m.toString();
+                ctx.fillText(label, x, y);
             }
 
             ctx.restore();
