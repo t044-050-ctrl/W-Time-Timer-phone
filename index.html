@@ -83,19 +83,19 @@
         /* 縦向き：タイムタイマーを上、デジタル表示・操作を下に配置 */
         @media (orientation: portrait) and (max-width: 767px) {
             main {
-                padding: 0.75rem !important;
-                padding-bottom: 6.5rem !important;
+                padding: 0.5rem !important;
+                padding-bottom: 4.5rem !important;
                 align-items: flex-start !important;
             }
             #main-grid {
                 grid-template-columns: minmax(0, 1fr) !important;
-                gap: 1rem !important;
+                gap: 0.25rem !important;
                 align-items: start !important;
             }
             #container-timer {
                 /* 縦画面では円形タイマーを画面高に合わせて縮小し、
                    デジタルタイマーと下部の切替バーのための空間を確保 */
-                width: min(100%, 430px, 38dvh) !important;
+                width: min(100%, 430px, 46dvh) !important;
                 max-width: 430px !important;
                 margin-inline: auto;
             }
